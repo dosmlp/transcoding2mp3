@@ -1,10 +1,10 @@
 #include "EncodeTask.h"
 
-EncodeTask::EncodeTask(const QString& file_name):
+EncodeTask::EncodeTask(const std::string& file_name):
     source_file_name_(file_name) {
     ctx = new TaskContext();
     ctx->source_file_name = source_file_name_;
-    int dot_index = source_file_name_.lastIndexOf(".");
+    int dot_index = source_file_name_.find_last_of('.');
     ctx->target_file_name = source_file_name_.insert(dot_index, "_");
 }
 
@@ -13,12 +13,13 @@ EncodeTask::~EncodeTask() {
 }
 void encode2mp3(TaskContext* task_ctx) {
 
-    QFile target_file(task_ctx->target_file_name);
-    if (!target_file.open(QIODevice::ReadWrite)) {
+    std::fstream target_file(task_ctx->target_file_name,ios::out|ios::app|ios::binary);
+    if (!target_file.is_open()) {
         task_ctx->enc_done = true;
         return;
     }
 
+    //设置MP3编码参数
     lame_global_flags* lame_global = lame_init();
     lame_set_in_samplerate(lame_global, task_ctx->in_codec_ctx->sample_rate);
     lame_set_num_channels(lame_global, av_get_channel_layout_nb_channels(task_ctx->in_codec_ctx->channel_layout));
@@ -28,23 +29,21 @@ void encode2mp3(TaskContext* task_ctx) {
     } else {
         lame_set_brate(lame_global,  source_brate / 1000);
     }
-
-
     id3tag_init(lame_global);
     id3tag_v2_only(lame_global);
-    id3tag_set_title(lame_global, QFileInfo(target_file).fileName().toLocal8Bit().data());
+//    id3tag_set_title(lame_global, QFileInfo(target_file).fileName().toLocal8Bit().data());
 
     if (lame_init_params(lame_global) == -1) {
         target_file.close();
-        target_file.remove();
-        qDebug() << "lame_init_params error!";
+        std::filesystem::remove(task_ctx->target_file_name);
+        std::cerr << "lame_init_params error!" << std::endl;
         task_ctx->enc_done = true;
         return;
     }
     char* pcm_buf[3] = {0};
-    pcm_buf[0] = (char*)alignment::aligned_alloc(16, BUFF_SAMPLE * 4);
-    pcm_buf[1] = (char*)alignment::aligned_alloc(16, BUFF_SAMPLE * 4);
-    pcm_buf[2] = (char*)alignment::aligned_alloc(16, BUFF_SAMPLE * 4);
+    pcm_buf[0] = (char*)align_malloc(BUFF_SAMPLE * 4, 16);
+    pcm_buf[1] = (char*)align_malloc(BUFF_SAMPLE * 4, 16);
+    pcm_buf[2] = (char*)align_malloc(BUFF_SAMPLE * 4, 16);
 
     for (;;) {
         task_ctx->lock_audio_fifo.lock();
@@ -66,19 +65,19 @@ void encode2mp3(TaskContext* task_ctx) {
                                                      BUFF_SAMPLE * 4);
         if (mp3_size < 0) {
             target_file.close();
-            target_file.remove();
+            std::filesystem::remove(task_ctx->target_file_name);
             switch (mp3_size) {
                 case -1:
-                    qDebug() << "-1:  mp3buf was too small";
+                    std::cerr << "-1:  mp3buf was too small" << std::endl;
                     break;
                 case -2:
-                    qDebug() << "-2:  malloc() problem";
+                    std::cerr << "-2:  malloc() problem" << std::endl;
                     break;
                 case -3:
-                    qDebug() << "-3:  lame_init_params() not called";
+                    std::cerr << "-3:  lame_init_params() not called" << std::endl;
                     break;
                 case -4:
-                    qDebug() << "-4:  psycho acoustic problems";
+                    std::cerr << "-4:  psycho acoustic problems" << std::endl;
                     break;
                 default:
                     break;
@@ -91,30 +90,30 @@ void encode2mp3(TaskContext* task_ctx) {
 
     lame_close(lame_global);
     target_file.close();
-    alignment::aligned_free(pcm_buf[0]);
-    alignment::aligned_free(pcm_buf[1]);
-    alignment::aligned_free(pcm_buf[2]);
+    align_free(pcm_buf[0]);
+    align_free(pcm_buf[1]);
+    align_free(pcm_buf[2]);
     pcm_buf[0] = 0;
     pcm_buf[1] = 0;
     pcm_buf[2] = 0;
     task_ctx->enc_done = true;
 }
 void EncodeTask::run() {
-    if (!QFile::exists(ctx->source_file_name)) {
-        qDebug() << "file does not exist:" + ctx->source_file_name;
+    if (!std::filesystem::exists(ctx->source_file_name)) {
+        std::cerr << "file does not exist:" + ctx->source_file_name << std::endl;
         ctx->dec_done = true;
         ctx->enc_done = true;
         return;
     }
     if (avformat_open_input(&ctx->in_format_ctx,
-                            ctx->source_file_name.toLocal8Bit().data(),
+                            ctx->source_file_name.c_str(),
                             0,
                             0) != 0) {
-        qDebug() << "Open input file error!";
+        std::cerr << "Open input file error!" << std::endl;
         return;
     }
     if (avformat_find_stream_info(ctx->in_format_ctx, 0) < 0) {
-        qDebug() << "avformat_find_stream_info error!";
+        std::cerr << "avformat_find_stream_info error!" << std::endl;
         return;
     }
 
@@ -124,14 +123,14 @@ void EncodeTask::run() {
             ctx->in_codec_ctx = ctx->in_format_ctx->streams[i]->codec;
             ctx->in_codec = avcodec_find_decoder(ctx->in_codec_ctx->codec_id);
             if (ctx->in_codec == NULL) {
-                qDebug() << "No audio data found";
+                std::cerr << "No audio data found" << std::endl;
                 return;
             }
             break;
         }
     }
     if (avcodec_open2(ctx->in_codec_ctx, ctx->in_codec, 0) < 0) {
-        qDebug() << "avcodec_open2 error!";
+        std::cerr << "avcodec_open2 error!" << std::endl;
         return;
     }
 
@@ -157,10 +156,10 @@ void EncodeTask::run() {
     swr_init(ctx->swr);
 
     //不需要转码输出0字节文件
+    std::string codec_name(ctx->in_codec->name);
     if (ctx->in_codec->id == AV_CODEC_ID_MP3 &&
-        QString(ctx->in_codec->name).contains("mp3")) {
-        QFile uname(ctx->target_file_name);
-        uname.open(QIODevice::ReadWrite);
+        codec_name.find("mp3") != codec_name.npos) {
+        std::fstream uname(ctx->target_file_name,ios::app|ios::binary|ios::out);
         uname.close();
         ctx->dec_done = true;
         ctx->enc_done = true;
@@ -168,8 +167,7 @@ void EncodeTask::run() {
     }
     if (ctx->in_codec->id == AV_CODEC_ID_AAC && ctx->in_codec->profiles) {
         if (ctx->in_codec->profiles[0].profile == FF_PROFILE_AAC_LOW) {
-            QFile uname(ctx->target_file_name);
-            uname.open(QIODevice::ReadWrite);
+            std::fstream uname(ctx->target_file_name,ios::app|ios::binary|ios::out);
             uname.close();
             ctx->dec_done = true;
             ctx->enc_done = true;
@@ -177,7 +175,7 @@ void EncodeTask::run() {
         }
     }
     thread encode_thread(encode2mp3, ctx);
-    encode_thread.detach();
+
     while (av_read_frame(ctx->in_format_ctx, ctx->packet) >= 0) {
         int got = 0;
         if (ctx->packet->stream_index == ctx->audio_index) {
@@ -210,6 +208,7 @@ void EncodeTask::run() {
         }
         av_free_packet(ctx->packet);
     }
+    encode_thread.join();
     ctx->dec_done = true;
     while (!ctx->enc_done) {
         QThread::msleep(1);

@@ -2,15 +2,18 @@
 #define ENCODETASK_H
 
 #include <Global.h>
+#include <string>
+#include <filesystem>
+#include "align_malloc.h"
 
 class EncodeTask : public QRunnable {
   public:
-    explicit EncodeTask(const QString& file_name);
+    explicit EncodeTask(const string &file_name);
     ~EncodeTask();
     void run();
   private:
     TaskContext* ctx;
-    QString source_file_name_;
+    std::string source_file_name_;
 };
 
 #endif // ENCODETASK_H

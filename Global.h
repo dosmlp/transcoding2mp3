@@ -5,23 +5,20 @@ extern "C"
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswresample/swresample.h>
-#include <lame/lame.h>
+#include <lame.h>
 #include <libavutil/audio_fifo.h>
 }
 #include <iostream>
 #include <fstream>
-#include <boost/smart_ptr/detail/spinlock.hpp>
-#include <boost/align.hpp>
 #include <thread>
-#include <QtCore/QtCore>
 
 using namespace std;
 using namespace boost;
 
 static int BUFF_SAMPLE = 48000;
 struct TaskContext {
-    QString source_file_name;
-    QString target_file_name;
+    string source_file_name;
+    string target_file_name;
     AVFormatContext* in_format_ctx;
     AVCodec* in_codec;
     AVCodecContext* in_codec_ctx;
